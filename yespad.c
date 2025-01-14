@@ -65,6 +65,8 @@ struct editorConfig E;
 
 //function def
 void editorSetStatusMessage(const char *fmt, ...);
+void editorRefreshScreen();
+char *editorPrompt(char *prompt);
 
 // terminal 
 void die(const char *s){
@@ -88,12 +90,12 @@ void enableRawMode(){
 	struct termios raw = E.orig_termios;
 	raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
 	raw.c_oflag &= ~(OPOST);
-	raw.c_cflag |= ~(CS8);
+	raw.c_cflag |= (CS8);
 	raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG );
-	
+
 	raw.c_cc[VMIN] = 0;
-	raw.c_cc[VTIME] = 100; 
-	
+	raw.c_cc[VTIME] = 100;
+
 	if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcgetattr");
 }
 
@@ -101,8 +103,7 @@ int editorReadKey(){
 	int nread;
 	char c;
 	while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-		if(nread == -1 && 
-errno != EAGAIN) die("read");
+		if(nread == -1 && errno != EAGAIN) die("read");
 	}
 
 	if (c == '\x1b'){
@@ -260,7 +261,7 @@ void editorRowInsertChar(erow *row, int at, int c){
 }
 
 void editorRowAppendString(erow *row, char *s, size_t len){
-	row->chars == realloc(row->chars, row->size + len + 1);
+	row->chars = realloc(row->chars, row->size + len + 1);
 	memcpy(&row->chars[row->size], s, len);
 	row->size +=len;
 	row->chars[row->size] = '\0';
@@ -360,7 +361,12 @@ void editorOpen(char *filename){
 }
 
 void editorSave(){
-	if(E.filename == NULL) return;
+	if(E.filename == NULL){
+		E.filename = editorPrompt("Save as : %s (ESC to escape)");
+	} if (E.filename == NULL){
+		editorSetStatusMessage("Save aborted");
+		return;
+	}
 
 	int len;
 	char *buf = editorRowsToString(&len);
@@ -521,6 +527,41 @@ void editorSetStatusMessage(const char *fmt, ...){
 }
 
 // input
+char *editorPrompt(char *prompt){
+	size_t bufsize = 128;
+	char *buf = malloc(bufsize);
+
+	size_t buflen = 0;
+	buf[0] = '\0';
+
+	while (1) {
+		editorSetStatusMessage(prompt, buf);
+		editorRefreshScreen();
+
+		int c = editorReadKey();
+		if(c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE){
+			if(buflen != 0) buf[--buflen] = '\0';
+		} else if(c == '\x1b'){
+			editorSetStatusMessage("");
+			free(buf);
+			return NULL;
+		} else if(c == '\r'){
+			if(buflen != 0){
+				editorSetStatusMessage("");
+				return buf;
+			}
+		} else if (!iscntrl(c) && c < 128){
+			if (buflen == bufsize - 1){
+				bufsize *= 2;
+				buf = realloc(buf, bufsize);
+			}
+
+			buf[buflen++] = c;
+			buf[buflen] = '\0';
+		}
+	}
+}
+
 void editorMoveCursor(int key){
 	erow *row = (E.cy >= E.numRows) ? NULL : &E.row[E.cy];
 
